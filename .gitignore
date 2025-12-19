@@ -28,3 +28,4 @@ ENV/
 htmlcov/
 .mypy_cache/
 .DS_Store
+stride_historical_fees.csv

@@ -70,6 +70,45 @@ class StrideClient:
         "band": 6,        # uband
     }
 
+    # API endpoints for each chain to query staking parameters
+    CHAIN_API_URLS = {
+        "cosmos": "https://cosmos-api.polkachu.com",
+        "celestia": "https://celestia-api.polkachu.com",
+        "osmosis": "https://osmosis-api.polkachu.com",
+        "dydx": "https://dydx-api.polkachu.com",
+        "dymension": "https://dymension-api.polkachu.com",
+        "juno": "https://juno-api.polkachu.com",
+        "stargaze": "https://stargaze-api.polkachu.com",
+        "terra2": "https://terra-api.polkachu.com",
+        "evmos": "https://evmos-api.polkachu.com",
+        "injective": "https://injective-api.polkachu.com",
+        "umee": "https://umee-api.polkachu.com",
+        "comdex": "https://comdex-api.polkachu.com",
+        "haqq": "https://haqq-api.polkachu.com",
+        "band": "https://band-api.polkachu.com",
+    }
+
+    # Fallback APRs (used if chain query fails)
+    # These values are typical/average rates - actual rates fluctuate over time
+    # Sources: Mintscan, StakingRewards.com, chain explorers (as of late 2025)
+    STAKING_APRS = {
+        "cosmos": 0.17,      # ~17% APR
+        "celestia": 0.12,    # ~12% APR
+        "osmosis": 0.25,     # ~25% APR (includes external incentives)
+        "dydx": 0.18,        # ~18% APR
+        "dymension": 0.22,   # ~22% APR
+        "juno": 0.30,        # ~30% APR
+        "stargaze": 0.35,    # ~35% APR
+        "terra": 0.10,       # ~10% APR
+        "terra2": 0.10,      # ~10% APR
+        "evmos": 2.00,       # ~200% APR (high incentives)
+        "injective": 0.10,   # ~10% APR
+        "umee": 0.17,        # ~17% APR
+        "comdex": 0.25,      # ~25% APR
+        "haqq": 0.12,        # ~12% APR
+        "band": 0.12,        # ~12% APR
+    }
+
     def __init__(self, api_url: str, rpc_url: str, price_api_url: str = "https://api.coingecko.com/api/v3"):
         self.api_url = api_url.rstrip("/")
         self.rpc_url = rpc_url.rstrip("/")
@@ -81,9 +120,106 @@ class StrideClient:
         self._cache_duration = timedelta(minutes=5)  # Cache prices for 5 minutes
         self._price_fetch_lock = asyncio.Lock()  # Prevent concurrent fetches
 
+        # APR caching (cache for 1 hour since APRs change slowly)
+        self._apr_cache: Dict[str, Dict] = {}  # {chain: {"apr": float, "timestamp": datetime}}
+        self._apr_cache_duration = timedelta(hours=1)
+
     async def close(self):
         """Close the HTTP client"""
         await self.client.aclose()
+
+    async def get_chain_apr(self, chain: str) -> float:
+        """
+        Get APR for a chain - queries from chain if possible, falls back to hardcoded value
+
+        Args:
+            chain: Chain name
+
+        Returns:
+            APR as decimal (e.g., 0.17 for 17%)
+        """
+        chain_lower = chain.lower()
+
+        # Check cache first
+        if chain_lower in self._apr_cache:
+            cached_data = self._apr_cache[chain_lower]
+            age = datetime.now() - cached_data["timestamp"]
+            if age < self._apr_cache_duration:
+                logger.debug(f"Using cached APR for {chain}: {cached_data['apr']*100:.2f}%")
+                return cached_data["apr"]
+
+        # Try to query from chain
+        chain_api_url = self.CHAIN_API_URLS.get(chain_lower)
+        if chain_api_url:
+            queried_apr = await self.query_chain_apr(chain_lower, chain_api_url)
+            if queried_apr is not None:
+                # Cache the result
+                self._apr_cache[chain_lower] = {
+                    "apr": queried_apr,
+                    "timestamp": datetime.now()
+                }
+                return queried_apr
+
+        # Fall back to hardcoded value
+        fallback_apr = self.STAKING_APRS.get(chain_lower, 0.18)
+        logger.info(f"Using fallback APR for {chain}: {fallback_apr*100:.1f}%")
+        return fallback_apr
+
+    async def query_chain_apr(self, chain: str, chain_api_url: str) -> Optional[float]:
+        """
+        Query actual APR from a Cosmos chain's staking parameters
+
+        Args:
+            chain: Chain name
+            chain_api_url: API endpoint for the chain (e.g., https://cosmos-api.polkachu.com)
+
+        Returns:
+            Calculated APR as decimal (e.g., 0.17 for 17%) or None if query fails
+        """
+        try:
+            # Query inflation rate
+            inflation_url = f"{chain_api_url}/cosmos/mint/v1beta1/inflation"
+            inflation_resp = await self.client.get(inflation_url)
+            inflation_resp.raise_for_status()
+            inflation_data = inflation_resp.json()
+            inflation = float(inflation_data.get("inflation", "0"))
+
+            # Query bonded tokens ratio
+            pool_url = f"{chain_api_url}/cosmos/staking/v1beta1/pool"
+            pool_resp = await self.client.get(pool_url)
+            pool_resp.raise_for_status()
+            pool_data = pool_resp.json()
+
+            bonded = float(pool_data.get("pool", {}).get("bonded_tokens", "0"))
+            not_bonded = float(pool_data.get("pool", {}).get("not_bonded_tokens", "0"))
+            total_supply = bonded + not_bonded
+
+            if total_supply == 0:
+                logger.warning(f"Zero total supply for {chain}")
+                return None
+
+            bonded_ratio = bonded / total_supply
+
+            # Query community tax
+            try:
+                params_url = f"{chain_api_url}/cosmos/distribution/v1beta1/params"
+                params_resp = await self.client.get(params_url)
+                params_resp.raise_for_status()
+                params_data = params_resp.json()
+                community_tax = float(params_data.get("params", {}).get("community_tax", "0"))
+            except:
+                community_tax = 0.02  # Default 2% if query fails
+
+            # Calculate APR: inflation * (1 - community_tax) / bonded_ratio
+            # This gives the base staking APR before validator commission
+            apr = inflation * (1 - community_tax) / bonded_ratio if bonded_ratio > 0 else 0
+
+            logger.info(f"Calculated APR for {chain}: {apr*100:.2f}% (inflation={inflation*100:.2f}%, bonded={bonded_ratio*100:.2f}%)")
+            return apr
+
+        except Exception as e:
+            logger.warning(f"Failed to query APR for {chain} from {chain_api_url}: {e}")
+            return None
 
     async def get_host_zones(self) -> List[Dict]:
         """Query all host zones from Stride"""
@@ -244,12 +380,12 @@ class StrideClient:
             # stToken supply * redemption rate = total native tokens
             total_native_value = staked_amount * redemption_rate
 
-            # Calculate daily rewards (approximate based on typical staking APR)
-            # This is a simplified calculation - in production you'd track historical redemption rates
-            # Typical cosmos chain APR is around 15-20% annually
-            # Daily rate ≈ annual_rate / 365
-            estimated_daily_rate = 0.0005  # ~18% APR / 365
-            daily_rewards_native = total_native_value * estimated_daily_rate
+            # Get chain-specific APR (queries from chain, falls back to hardcoded)
+            annual_apr = await self.get_chain_apr(chain)
+            daily_rate = annual_apr / 365  # Convert annual rate to daily rate
+
+            logger.info(f"Using APR {annual_apr*100:.1f}% ({daily_rate*100:.4f}% daily) for {chain}")
+            daily_rewards_native = total_native_value * daily_rate
 
             # Get USD price
             token_price = await self.get_token_price(chain)
