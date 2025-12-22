@@ -90,11 +90,11 @@ class StrideClient:
 
     # Fallback APRs (used if chain query fails)
     # These values are typical/average rates - actual rates fluctuate over time
-    # Sources: Mintscan, StakingRewards.com, chain explorers (as of late 2025)
+    # Sources: Mintscan, StakingRewards.com, chain explorers (as of January 2025)
     STAKING_APRS = {
         "cosmos": 0.17,      # ~17% APR
-        "celestia": 0.12,    # ~12% APR
-        "osmosis": 0.25,     # ~25% APR (includes external incentives)
+        "celestia": 0.08,    # ~8% APR (updated from on-chain data)
+        "osmosis": 0.015,    # ~1.5% APR (only 8% of mint goes to staking)
         "dydx": 0.18,        # ~18% APR
         "dymension": 0.22,   # ~22% APR
         "juno": 0.30,        # ~30% APR
@@ -165,6 +165,80 @@ class StrideClient:
         logger.info(f"Using fallback APR for {chain}: {fallback_apr*100:.1f}%")
         return fallback_apr
 
+    async def query_osmosis_apr(self, chain_api_url: str) -> Optional[float]:
+        """
+        Query actual APR from Osmosis chain (uses custom mint module)
+
+        Args:
+            chain_api_url: API endpoint for Osmosis (e.g., https://osmosis-api.polkachu.com)
+
+        Returns:
+            Calculated APR as decimal or None if query fails
+        """
+        try:
+            # Query epoch provisions (daily minting)
+            provisions_url = f"{chain_api_url}/osmosis/mint/v1beta1/epoch_provisions"
+            provisions_resp = await self.client.get(provisions_url)
+            provisions_resp.raise_for_status()
+            provisions_data = provisions_resp.json()
+            epoch_provisions = float(provisions_data.get("epoch_provisions", "0"))
+
+            # Query mint params to get staking distribution proportion
+            params_url = f"{chain_api_url}/osmosis/mint/v1beta1/params"
+            params_resp = await self.client.get(params_url)
+            params_resp.raise_for_status()
+            params_data = params_resp.json()
+            staking_proportion = float(
+                params_data.get("params", {})
+                .get("distribution_proportions", {})
+                .get("staking", "0")
+            )
+
+            # Query bonded tokens
+            pool_url = f"{chain_api_url}/cosmos/staking/v1beta1/pool"
+            pool_resp = await self.client.get(pool_url)
+            pool_resp.raise_for_status()
+            pool_data = pool_resp.json()
+            bonded = float(pool_data.get("pool", {}).get("bonded_tokens", "0"))
+
+            if bonded == 0:
+                logger.warning("Zero bonded tokens for Osmosis")
+                return None
+
+            # Calculate APR
+            # (epoch_provisions * staking_proportion * 365) / bonded_tokens
+            # epoch_provisions is per day (epoch_identifier = "day")
+            annual_staking_rewards = epoch_provisions * staking_proportion * 365
+            apr = annual_staking_rewards / bonded
+
+            logger.info(f"Calculated Osmosis APR: {apr*100:.2f}% (staking_proportion={staking_proportion*100:.1f}%)")
+            return apr
+
+        except Exception as e:
+            logger.warning(f"Failed to query Osmosis APR: {e}")
+            return None
+
+    async def query_celestia_apr(self, chain_api_url: str) -> Optional[float]:
+        """
+        Query actual APR from Celestia chain (uses custom mint module)
+
+        Args:
+            chain_api_url: API endpoint for Celestia
+
+        Returns:
+            Calculated APR as decimal or None if query fails
+        """
+        try:
+            # Celestia doesn't expose standard inflation endpoints
+            # Try to calculate from params if available
+            # For now, return None and use fallback
+            # TODO: Find proper Celestia inflation endpoint
+            return None
+
+        except Exception as e:
+            logger.warning(f"Failed to query Celestia APR: {e}")
+            return None
+
     async def query_chain_apr(self, chain: str, chain_api_url: str) -> Optional[float]:
         """
         Query actual APR from a Cosmos chain's staking parameters
@@ -176,6 +250,13 @@ class StrideClient:
         Returns:
             Calculated APR as decimal (e.g., 0.17 for 17%) or None if query fails
         """
+        # Use chain-specific methods for chains with custom mint modules
+        if chain == "osmosis":
+            return await self.query_osmosis_apr(chain_api_url)
+        elif chain == "celestia":
+            return await self.query_celestia_apr(chain_api_url)
+
+        # Standard Cosmos SDK inflation calculation for other chains
         try:
             # Query inflation rate
             inflation_url = f"{chain_api_url}/cosmos/mint/v1beta1/inflation"
