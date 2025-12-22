@@ -90,18 +90,18 @@ class StrideClient:
 
     # Fallback APRs (used if chain query fails)
     # These values are typical/average rates - actual rates fluctuate over time
-    # Sources: Mintscan, StakingRewards.com, chain explorers (as of January 2025)
+    # Sources: Mintscan, StakingRewards.com, dYdX Foundation, chain explorers (Dec 2024)
     STAKING_APRS = {
         "cosmos": 0.17,      # ~17% APR
         "celestia": 0.08,    # ~8% APR (updated from on-chain data)
         "osmosis": 0.015,    # ~1.5% APR (only 8% of mint goes to staking)
-        "dydx": 0.18,        # ~18% APR
+        "dydx": 0.07,        # ~7% APR (dYdX Foundation: ~6.36%)
         "dymension": 0.22,   # ~22% APR
         "juno": 0.30,        # ~30% APR
-        "stargaze": 0.35,    # ~35% APR
-        "terra": 0.10,       # ~10% APR
-        "terra2": 0.10,      # ~10% APR
-        "evmos": 2.00,       # ~200% APR (high incentives)
+        "stargaze": 0.10,    # ~10% APR (sources: 8-13%, some up to 26%)
+        "terra": 0.20,       # ~20% APR (sources: 18-32%)
+        "terra2": 0.20,      # ~20% APR (sources: 18-32%)
+        "evmos": 0.02,       # ~2% APR (TC Network: 1.49%, conservative estimate)
         "injective": 0.10,   # ~10% APR
         "umee": 0.17,        # ~17% APR
         "comdex": 0.25,      # ~25% APR
