@@ -446,27 +446,21 @@ class StrideClient:
             if not host_zone:
                 raise ValueError(f"Host zone not found for {chain_id}")
 
-            # Extract redemption rate and staked amount
-            redemption_rate = float(host_zone.get("redemption_rate", "1.0"))
+            # Extract staked amount from host zone
+            # total_delegations represents the total native tokens delegated by Stride
             staked_amount_str = host_zone.get("total_delegations", "0")
             staked_amount = float(staked_amount_str)
-
-            # Get stToken supply (this represents total liquid staked)
-            st_denom = host_zone.get("host_denom", "")
-            if st_denom.startswith("u"):
-                # Convert to st token denom (e.g., uatom -> stuatom)
-                st_denom = f"st{st_denom}"
-
-            # Calculate total value in native tokens
-            # stToken supply * redemption rate = total native tokens
-            total_native_value = staked_amount * redemption_rate
 
             # Get chain-specific APR (queries from chain, falls back to hardcoded)
             annual_apr = await self.get_chain_apr(chain)
             daily_rate = annual_apr / 365  # Convert annual rate to daily rate
 
             logger.info(f"Using APR {annual_apr*100:.1f}% ({daily_rate*100:.4f}% daily) for {chain}")
-            daily_rewards_native = total_native_value * daily_rate
+
+            # Calculate daily rewards based on total delegations
+            # Note: We use total_delegations directly, NOT total_delegations * redemption_rate
+            # because total_delegations already represents the total native tokens delegated
+            daily_rewards_native = staked_amount * daily_rate
 
             # Get USD price
             token_price = await self.get_token_price(chain)
