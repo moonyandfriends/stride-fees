@@ -373,6 +373,20 @@ Core stack:
 
 **Always use `TOKEN_DECIMALS` dict** when converting native amounts to token amounts.
 
+## Recent Bug Fixes (Dec 2024)
+
+### Critical: Silent $0 Fees Bug in Batch Endpoint
+**Problem**: `/api/all/stats/fees` returned $0 for all chains while single chain endpoints worked correctly.
+
+**Root Cause**: Price fetch failures were silently swallowed, setting `token_price = 0.0` instead of raising exceptions. When CoinGecko rate limited batch requests, subsequent calculations resulted in $0 fees.
+
+**Fixes Applied**:
+1. **Raise exceptions on price failures** (stride_client.py:470): Changed from logging warning + using $0 to raising `ValueError`
+2. **Retry logic with exponential backoff** (stride_client.py:394-407): Added 3 retry attempts with 1s/2s delays for batch price fetching
+3. **Better error handling in batch endpoint** (main.py:100-103): Wrap batch price fetch in try/except to log failures without crashing
+
+**Result**: Errors are now properly logged, and transient CoinGecko failures are handled gracefully with retries.
+
 ## Known Limitations
 
 1. **Snapshot data collection**: Requires daily cron job for optimal accuracy (falls back to APR estimation if unavailable)

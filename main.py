@@ -97,7 +97,10 @@ async def get_all_fees():
 
         # Pre-fetch all prices in a single batch request to avoid rate limits
         logger.info("Pre-fetching prices for all chains in batch...")
-        await stride_client.get_token_prices_batch(supported_chains)
+        try:
+            await stride_client.get_token_prices_batch(supported_chains)
+        except Exception as e:
+            logger.warning(f"Batch price fetch failed: {e}, will fetch individually")
 
         results = {}
         for chain in supported_chains:
@@ -107,12 +110,14 @@ async def get_all_fees():
 
                 if fees_data is None:
                     # No snapshot data, use APR method
+                    logger.debug(f"No snapshot for {chain}, using APR method")
                     fees_data = await stride_client.calculate_daily_fee(chain)
                     fees_data["method"] = "apr_estimation"
 
                 results[chain] = fees_data
+                logger.info(f"{chain}: ${fees_data.get('dailyFees', 0):.2f} fees (method: {fees_data.get('method', 'unknown')})")
             except Exception as e:
-                logger.warning(f"Failed to get fees for {chain}: {e}")
+                logger.error(f"Failed to get fees for {chain}: {e}", exc_info=True)
                 results[chain] = {
                     "dailyFees": 0,
                     "dailyRevenue": 0,

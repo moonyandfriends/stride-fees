@@ -381,31 +381,46 @@ class StrideClient:
                             chain_id_map[coingecko_id] = chain
 
                     if coingecko_ids:
-                        # Batch request for all uncached prices
+                        # Batch request for all uncached prices with retry logic
                         url = f"{self.price_api_url}/simple/price"
                         params = {
                             "ids": ",".join(coingecko_ids),
                             "vs_currencies": "usd"
                         }
                         logger.info(f"Fetching batch prices for: {', '.join(chains_to_fetch)}")
-                        response = await self.client.get(url, params=params)
-                        response.raise_for_status()
-                        data = response.json()
 
-                        # Cache and store results
-                        now = datetime.now()
-                        for coingecko_id, chain in chain_id_map.items():
-                            price = data.get(coingecko_id, {}).get("usd")
-                            if price is not None:
-                                prices[chain] = price
-                                self._price_cache[chain] = {
-                                    "price": price,
-                                    "timestamp": now
-                                }
-                                logger.info(f"Cached price for {chain}: ${price}")
-                            else:
-                                prices[chain] = None
-                                logger.warning(f"No price data for {chain}")
+                        # Retry with exponential backoff (up to 3 attempts)
+                        data = None
+                        for attempt in range(3):
+                            try:
+                                response = await self.client.get(url, params=params, timeout=10.0)
+                                response.raise_for_status()
+                                data = response.json()
+                                break  # Success!
+                            except Exception as e:
+                                if attempt < 2:  # Don't sleep on last attempt
+                                    wait_time = 2 ** attempt  # Exponential: 1s, 2s
+                                    logger.warning(f"Price fetch attempt {attempt + 1} failed: {e}, retrying in {wait_time}s...")
+                                    await asyncio.sleep(wait_time)
+                                else:
+                                    logger.error(f"Price fetch failed after 3 attempts: {e}")
+                                    raise
+
+                        # Cache and store results (only if data was successfully fetched)
+                        if data:
+                            now = datetime.now()
+                            for coingecko_id, chain in chain_id_map.items():
+                                price = data.get(coingecko_id, {}).get("usd")
+                                if price is not None:
+                                    prices[chain] = price
+                                    self._price_cache[chain] = {
+                                        "price": price,
+                                        "timestamp": now
+                                    }
+                                    logger.info(f"Cached price for {chain}: ${price}")
+                                else:
+                                    prices[chain] = None
+                                    logger.warning(f"No price data for {chain}")
                     else:
                         logger.warning(f"No CoinGecko IDs found for: {chains_to_fetch}")
 
@@ -467,8 +482,7 @@ class StrideClient:
             # Get USD price
             token_price = await self.get_token_price(chain)
             if not token_price:
-                logger.warning(f"Could not get price for {chain}, using $0")
-                token_price = 0.0
+                raise ValueError(f"Could not get USD price for {chain} - price API may be rate limited")
 
             # Get the correct decimal places for this chain
             decimals = self.TOKEN_DECIMALS.get(chain, 6)  # Default to 6 if unknown
