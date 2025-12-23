@@ -497,7 +497,13 @@ class StrideClient:
         Returns:
             Dict with snapshot data or None if file doesn't exist
         """
-        snapshot_file = Path(__file__).parent / "redemption_rate_snapshots.json"
+        # Use Railway volume path if available, otherwise local directory
+        import os
+        snapshot_data_dir = os.getenv("SNAPSHOT_DATA_DIR")
+        if snapshot_data_dir:
+            snapshot_file = Path(snapshot_data_dir) / "redemption_rate_snapshots.json"
+        else:
+            snapshot_file = Path(__file__).parent / "redemption_rate_snapshots.json"
 
         if not snapshot_file.exists():
             logger.debug(f"No snapshot file at {snapshot_file}")

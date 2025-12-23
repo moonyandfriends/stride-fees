@@ -31,8 +31,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Snapshot file path
-SNAPSHOT_FILE = Path(__file__).parent / "redemption_rate_snapshots.json"
+# Snapshot file path - use Railway volume if available, otherwise local directory
+SNAPSHOT_DATA_DIR = os.getenv("SNAPSHOT_DATA_DIR")
+if SNAPSHOT_DATA_DIR:
+    SNAPSHOT_FILE = Path(SNAPSHOT_DATA_DIR) / "redemption_rate_snapshots.json"
+    logger.info(f"Using persistent volume: {SNAPSHOT_FILE}")
+else:
+    SNAPSHOT_FILE = Path(__file__).parent / "redemption_rate_snapshots.json"
+    logger.info(f"Using local directory: {SNAPSHOT_FILE}")
 
 
 class RedemptionRateTracker:

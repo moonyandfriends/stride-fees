@@ -270,22 +270,40 @@ When GitHub repo updates, Railway automatically rebuilds the container.
 
 **Good news!** The API now includes a **built-in scheduler** that automatically runs snapshots daily at midnight UTC.
 
-**No manual setup required** - just deploy and it works! The scheduler:
-- ✅ Runs automatically when the API starts
-- ✅ Takes a snapshot immediately on startup
-- ✅ Schedules daily snapshots at 00:00 UTC
-- ✅ Logs all activity to the console
-- ✅ Works on Railway, Docker, and local development
+**Setup Requirements**:
+1. ✅ Scheduler runs automatically (no config needed)
+2. ⚠️ **Set up persistent storage** (Railway Volume) - see below
+
+**The scheduler**:
+- Runs automatically when the API starts
+- Takes a snapshot immediately on startup
+- Schedules daily snapshots at 00:00 UTC
+- Logs all activity to the console
+- Works on Railway, Docker, and local development
 
 **How it works**:
 - `scheduler.py` uses APScheduler to run `snapshot_redemption_rates.py` daily
 - Integrated into FastAPI's lifespan (starts/stops with the API)
 - No external cron service needed!
 
+### Setting Up Persistent Storage (Railway Volume)
+
+**CRITICAL**: Railway containers are ephemeral and reset on every deploy. Without a volume, snapshots are lost!
+
+**Quick Setup** (in Railway Dashboard):
+1. Go to your service → **"Volumes"** tab
+2. Click **"+ New Volume"**
+3. Mount Path: `/data`
+4. Click **"Add"**
+5. Add environment variable: `SNAPSHOT_DATA_DIR=/data`
+6. Redeploy
+
+**Detailed instructions**: See `SETUP_RAILWAY_VOLUME.md`
+
 **Monitoring**:
 ```bash
 # Check Railway logs to see snapshot activity
-# Look for messages like:
+# "Using persistent volume: /data/redemption_rate_snapshots.json"  ← Good!
 # "📅 Scheduler started - snapshots will run daily at 00:00 UTC"
 # "✅ Scheduled snapshot completed successfully"
 ```
