@@ -3,8 +3,10 @@ Client for querying Stride blockchain data
 """
 import httpx
 import logging
+import json
+from pathlib import Path
 from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -487,3 +489,122 @@ class StrideClient:
         except Exception as e:
             logger.error(f"Failed to calculate fees for {chain}: {e}")
             raise
+
+    def load_snapshots(self) -> Optional[Dict]:
+        """
+        Load redemption rate snapshots from file
+
+        Returns:
+            Dict with snapshot data or None if file doesn't exist
+        """
+        snapshot_file = Path(__file__).parent / "redemption_rate_snapshots.json"
+
+        if not snapshot_file.exists():
+            logger.debug(f"No snapshot file at {snapshot_file}")
+            return None
+
+        try:
+            with open(snapshot_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load snapshots: {e}")
+            return None
+
+    def get_snapshot_for_date(self, date: str) -> Optional[Dict]:
+        """
+        Get snapshot for a specific date (YYYY-MM-DD)
+
+        Args:
+            date: Date string in YYYY-MM-DD format
+
+        Returns:
+            Snapshot dict or None if not found
+        """
+        data = self.load_snapshots()
+        if not data:
+            return None
+
+        snapshots = data.get("snapshots", [])
+        for snapshot in snapshots:
+            if snapshot.get("date") == date:
+                return snapshot
+
+        return None
+
+    async def calculate_daily_fee_from_snapshots(self, chain: str) -> Optional[Dict[str, float]]:
+        """
+        Calculate daily fees using redemption rate snapshots (more accurate than APR)
+
+        This method looks for snapshots from today and yesterday, calculates the
+        redemption rate change, and computes actual rewards earned.
+
+        Args:
+            chain: Chain name (e.g., "cosmos", "osmosis")
+
+        Returns:
+            Dict with dailyFees and dailyRevenue, or None if snapshot data unavailable
+        """
+        try:
+            # Get today and yesterday's dates
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            yesterday_dt = datetime.now(timezone.utc) - timedelta(days=1)
+            yesterday = yesterday_dt.strftime("%Y-%m-%d")
+
+            # Load snapshots
+            snapshot_today = self.get_snapshot_for_date(today)
+            snapshot_yesterday = self.get_snapshot_for_date(yesterday)
+
+            if not snapshot_today or not snapshot_yesterday:
+                logger.debug(f"Missing snapshots for {chain} (today: {snapshot_today is not None}, yesterday: {snapshot_yesterday is not None})")
+                return None
+
+            # Get chain data from snapshots
+            chain_today = snapshot_today.get("chains", {}).get(chain)
+            chain_yesterday = snapshot_yesterday.get("chains", {}).get(chain)
+
+            if not chain_today or not chain_yesterday:
+                logger.debug(f"Missing chain data for {chain} in snapshots")
+                return None
+
+            # Extract redemption rates and stToken supply
+            rr_today = float(chain_today.get("redemption_rate", 0))
+            rr_yesterday = float(chain_yesterday.get("redemption_rate", 0))
+            sttoken_supply = float(chain_today.get("sttoken_supply", 0))
+
+            if rr_today == 0 or rr_yesterday == 0 or sttoken_supply == 0:
+                logger.warning(f"Invalid snapshot data for {chain}: rr_today={rr_today}, rr_yesterday={rr_yesterday}, supply={sttoken_supply}")
+                return None
+
+            # Calculate actual daily rewards from redemption rate change
+            rr_change = rr_today - rr_yesterday
+            daily_rewards_native = sttoken_supply * rr_change
+
+            # Handle negative changes (shouldn't happen normally, but could due to slashing)
+            if daily_rewards_native < 0:
+                logger.warning(f"Negative rewards for {chain}: {daily_rewards_native} (slashing event?)")
+                daily_rewards_native = 0
+
+            # Get USD price
+            token_price = await self.get_token_price(chain)
+            if not token_price:
+                logger.warning(f"Could not get price for {chain}")
+                token_price = 0.0
+
+            # Get decimals and convert to USD
+            decimals = self.TOKEN_DECIMALS.get(chain, 6)
+            divisor = 10 ** decimals
+
+            daily_fees_usd = daily_rewards_native * token_price / divisor
+            daily_revenue_usd = daily_fees_usd * 0.10
+
+            logger.info(f"[SNAPSHOT] {chain}: RR change {rr_change:.10f} → ${daily_fees_usd:,.2f} fees")
+
+            return {
+                "dailyFees": daily_fees_usd,
+                "dailyRevenue": daily_revenue_usd,
+                "method": "redemption_rate_snapshot"
+            }
+
+        except Exception as e:
+            logger.warning(f"Failed to calculate fees from snapshots for {chain}: {e}")
+            return None

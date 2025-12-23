@@ -95,15 +95,22 @@ async def get_all_fees():
         results = {}
         for chain in supported_chains:
             try:
-                # Now calculate fees (prices will come from cache)
-                fees_data = await stride_client.calculate_daily_fee(chain)
+                # Try snapshot method first, fall back to APR method
+                fees_data = await stride_client.calculate_daily_fee_from_snapshots(chain)
+
+                if fees_data is None:
+                    # No snapshot data, use APR method
+                    fees_data = await stride_client.calculate_daily_fee(chain)
+                    fees_data["method"] = "apr_estimation"
+
                 results[chain] = fees_data
             except Exception as e:
                 logger.warning(f"Failed to get fees for {chain}: {e}")
                 results[chain] = {
                     "dailyFees": 0,
                     "dailyRevenue": 0,
-                    "error": str(e)
+                    "error": str(e),
+                    "method": "error"
                 }
 
         return {"chains": results}
@@ -132,8 +139,14 @@ async def get_chain_fees(chain: str) -> FeeResponse:
         if chain == "terra":
             chain = "terra2"
 
-        # Calculate fees
-        fees_data = await stride_client.calculate_daily_fee(chain)
+        # Try to calculate fees using redemption rate snapshots first (more accurate)
+        fees_data = await stride_client.calculate_daily_fee_from_snapshots(chain)
+
+        # Fall back to APR-based calculation if snapshot data unavailable
+        if fees_data is None:
+            logger.info(f"No snapshot data for {chain}, using APR method")
+            fees_data = await stride_client.calculate_daily_fee(chain)
+            fees_data["method"] = "apr_estimation"
 
         return FeeResponse(fees=fees_data)
 
