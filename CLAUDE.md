@@ -418,6 +418,30 @@ Core stack:
 }
 ```
 
+### Stride Edge API as APR Backup (NEW)
+**Problem**: Direct chain APR queries can fail due to network issues, API changes, or custom mint modules.
+
+**Solution**: Three-tier APR fallback using Stride's own edge API (stride_client.py:133-183):
+
+**How It Works**:
+1. **Tier 1**: Direct chain query (most accurate, real-time data from chain)
+   - Cosmos SDK standard: queries inflation, bonded ratio, community tax
+   - Osmosis custom: queries epoch provisions and distribution proportions
+   - Celestia custom: queries inflation parameters and genesis supply
+2. **Tier 2**: Stride edge API (reliable backup from Stride's calculations)
+   - Endpoint: `https://edge.stride.zone/api/{chain}/stats/apy`
+   - Returns both APY and APR (we use APR)
+   - Available for all 16 supported chains
+3. **Tier 3**: Hardcoded fallback (last resort, ~18% default)
+
+**Benefits**:
+- ✅ Automatic failover when chain queries fail
+- ✅ Uses Stride's own APR data as authoritative backup
+- ✅ No manual fallback maintenance needed
+- ✅ Cached for 1 hour to reduce API calls
+
+**Example**: Juno doesn't have a configured chain API URL, so it automatically uses Stride edge API (9.88% APR).
+
 ## Known Limitations
 
 1. **Snapshot data collection**: Requires Railway Volume setup for optimal accuracy (falls back to APR estimation if unavailable)

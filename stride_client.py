@@ -132,7 +132,10 @@ class StrideClient:
 
     async def get_chain_apr(self, chain: str) -> float:
         """
-        Get APR for a chain - queries from chain if possible, falls back to hardcoded value
+        Get APR for a chain with three-tier fallback:
+        1. Direct chain query (most accurate, but can fail)
+        2. Stride edge API (reliable backup from Stride's own data)
+        3. Hardcoded fallback (last resort)
 
         Args:
             chain: Chain name
@@ -142,7 +145,7 @@ class StrideClient:
         """
         chain_lower = chain.lower()
 
-        # Check cache first
+        # Check cache first (1 hour TTL)
         if chain_lower in self._apr_cache:
             cached_data = self._apr_cache[chain_lower]
             age = datetime.now() - cached_data["timestamp"]
@@ -150,7 +153,7 @@ class StrideClient:
                 logger.debug(f"Using cached APR for {chain}: {cached_data['apr']*100:.2f}%")
                 return cached_data["apr"]
 
-        # Try to query from chain
+        # Tier 1: Try to query from chain directly (most accurate)
         chain_api_url = self.CHAIN_API_URLS.get(chain_lower)
         if chain_api_url:
             queried_apr = await self.query_chain_apr(chain_lower, chain_api_url)
@@ -160,11 +163,23 @@ class StrideClient:
                     "apr": queried_apr,
                     "timestamp": datetime.now()
                 }
+                logger.info(f"✓ Using chain-queried APR for {chain}: {queried_apr*100:.2f}%")
                 return queried_apr
 
-        # Fall back to hardcoded value
+        # Tier 2: Try Stride edge API (reliable backup)
+        edge_apr = await self.query_stride_edge_apr(chain_lower)
+        if edge_apr is not None:
+            # Cache the result
+            self._apr_cache[chain_lower] = {
+                "apr": edge_apr,
+                "timestamp": datetime.now()
+            }
+            logger.info(f"✓ Using Stride edge API APR for {chain}: {edge_apr*100:.2f}%")
+            return edge_apr
+
+        # Tier 3: Fall back to hardcoded value (last resort)
         fallback_apr = self.STAKING_APRS.get(chain_lower, 0.18)
-        logger.info(f"Using fallback APR for {chain}: {fallback_apr*100:.1f}%")
+        logger.warning(f"⚠ Using hardcoded fallback APR for {chain}: {fallback_apr*100:.1f}%")
         return fallback_apr
 
     async def query_osmosis_apr(self, chain_api_url: str) -> Optional[float]:
@@ -302,6 +317,38 @@ class StrideClient:
 
         except Exception as e:
             logger.warning(f"Failed to query APR for {chain} from {chain_api_url}: {e}")
+            return None
+
+    async def query_stride_edge_apr(self, chain: str) -> Optional[float]:
+        """
+        Query APR from Stride's edge API (reliable backup source)
+
+        Args:
+            chain: Chain name (e.g., 'cosmos', 'osmosis', 'celestia')
+
+        Returns:
+            APR as decimal (e.g., 0.17 for 17%) or None if query fails
+        """
+        try:
+            edge_url = f"https://edge.stride.zone/api/{chain}/stats/apy"
+            logger.info(f"Querying Stride edge API for {chain} APR: {edge_url}")
+
+            response = await self.client.get(edge_url, timeout=10.0)
+            response.raise_for_status()
+            data = response.json()
+
+            # Response format: {"denom":"stATOM","apy":0.218,"apr":0.197}
+            apr = float(data.get("apr", 0))
+
+            if apr > 0:
+                logger.info(f"Got APR from Stride edge API for {chain}: {apr*100:.2f}%")
+                return apr
+            else:
+                logger.warning(f"Stride edge API returned zero APR for {chain}")
+                return None
+
+        except Exception as e:
+            logger.warning(f"Failed to query Stride edge API for {chain}: {e}")
             return None
 
     async def get_host_zones(self) -> List[Dict]:
