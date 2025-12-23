@@ -46,9 +46,16 @@ async def lifespan(app: FastAPI):
     )
     logger.info("Stride client initialized")
 
+    # Start background scheduler for daily snapshots
+    from scheduler import start_scheduler
+    scheduler = start_scheduler()
+    logger.info("Background scheduler started for daily snapshots")
+
     yield
 
     # Shutdown
+    scheduler.shutdown()
+    logger.info("Scheduler stopped")
     await stride_client.close()
     logger.info("Stride client closed")
 

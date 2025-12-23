@@ -6,3 +6,6 @@ dockerfilePath = "Dockerfile"
 startCommand = "python main.py"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
+
+# Railway doesn't support traditional cron jobs
+# Use APScheduler in main.py instead (see below)

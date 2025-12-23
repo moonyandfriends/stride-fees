@@ -266,38 +266,34 @@ This repo is configured for automatic Railway deployment via `railway.toml`:
 
 When GitHub repo updates, Railway automatically rebuilds the container.
 
-### Setting Up Redemption Rate Snapshots in Production
+### Automatic Snapshot Collection
 
-**IMPORTANT**: For accurate fee calculations in production, set up daily snapshots:
+**Good news!** The API now includes a **built-in scheduler** that automatically runs snapshots daily at midnight UTC.
 
-1. **SSH into your Railway container** or server:
-   ```bash
-   # Install crontab if not available
-   apt-get update && apt-get install -y cron
+**No manual setup required** - just deploy and it works! The scheduler:
+- ✅ Runs automatically when the API starts
+- ✅ Takes a snapshot immediately on startup
+- ✅ Schedules daily snapshots at 00:00 UTC
+- ✅ Logs all activity to the console
+- ✅ Works on Railway, Docker, and local development
 
-   # Edit crontab
-   crontab -e
-   ```
+**How it works**:
+- `scheduler.py` uses APScheduler to run `snapshot_redemption_rates.py` daily
+- Integrated into FastAPI's lifespan (starts/stops with the API)
+- No external cron service needed!
 
-2. **Add cron job** (runs daily at midnight UTC):
-   ```
-   0 0 * * * cd /app && /usr/local/bin/python3 snapshot_redemption_rates.py >> /app/snapshot.log 2>&1
-   ```
+**Monitoring**:
+```bash
+# Check Railway logs to see snapshot activity
+# Look for messages like:
+# "📅 Scheduler started - snapshots will run daily at 00:00 UTC"
+# "✅ Scheduled snapshot completed successfully"
+```
 
-3. **Create initial snapshot** manually:
-   ```bash
-   cd /app
-   python3 snapshot_redemption_rates.py
-   ```
-
-4. **Verify**:
-   ```bash
-   # Check snapshot file exists
-   ls -lh redemption_rate_snapshots.json
-
-   # Check cron logs
-   tail -f snapshot.log
-   ```
+**Manual snapshot** (optional, for testing):
+```bash
+python3 snapshot_redemption_rates.py
+```
 
 **Note**: The API will use APR estimation until you have at least 2 days of snapshots. After that, it automatically switches to the more accurate snapshot method.
 
@@ -309,6 +305,7 @@ Core stack:
 - **httpx 0.27.2** - Async HTTP client (for Stride/CoinGecko APIs)
 - **pydantic 2.10.3** - Data validation
 - **python-dotenv 1.0.1** - Environment management
+- **apscheduler 3.10.4** - Background scheduler for daily snapshots
 
 ## Important Implementation Details
 
