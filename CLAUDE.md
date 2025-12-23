@@ -442,6 +442,34 @@ Core stack:
 
 **Example**: Juno doesn't have a configured chain API URL, so it automatically uses Stride edge API (9.88% APR).
 
+### Chain Mapping Fixes for DefiLlama (Dec 2024)
+**Problem**: Inconsistent chain visibility in DefiLlama - some chains appeared, some didn't, some were intermittent.
+
+**Root Causes Found**:
+1. **Missing ISLM override**: DefiLlama calls Haqq as "islm" but we only handled "haqq"
+2. **Dymension doesn't exist**: We had dymension in our list but it's not in Stride's host zones
+3. **Missing chains**: Saga and Sommelier exist in Stride but weren't in our API
+
+**Fixes Applied**:
+1. **Added ISLM → Haqq override** (main.py:151-155):
+   ```python
+   chain_overrides = {
+       "terra": "terra2",
+       "islm": "haqq",  # Islamic Coin → Haqq Network
+   }
+   ```
+
+2. **Removed Dymension** - Not a Stride host zone (was causing errors)
+
+3. **Added Saga and Sommelier** - Real Stride chains that were missing:
+   - Saga (ssc-1): CoinGecko ID "saga-2", 6 decimals
+   - Sommelier (sommelier-3): CoinGecko ID "sommelier", 6 decimals
+
+**Verified Chain List** (15 total):
+- cosmos, celestia, osmosis, dydx, juno, stargaze, terra2, evmos, injective, umee, comdex, haqq, band, **saga**, **sommelier**
+
+**Testing**: All endpoints now return valid data, matching Stride's actual host zones.
+
 ## Known Limitations
 
 1. **Snapshot data collection**: Requires Railway Volume setup for optimal accuracy (falls back to APR estimation if unavailable)

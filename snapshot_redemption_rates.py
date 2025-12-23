@@ -46,10 +46,11 @@ class RedemptionRateTracker:
 
     def __init__(self, stride_client: StrideClient):
         self.client = stride_client
+        # All chains with active Stride host zones (verified against Stride API)
         self.chains = [
-            "cosmos", "celestia", "osmosis", "dydx", "dymension",
+            "cosmos", "celestia", "osmosis", "dydx",
             "juno", "stargaze", "terra2", "evmos", "injective",
-            "umee", "comdex", "haqq", "band"
+            "umee", "comdex", "haqq", "band", "saga", "sommelier"
         ]
 
     async def get_snapshot(self) -> Dict:

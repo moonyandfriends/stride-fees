@@ -89,10 +89,11 @@ async def get_all_fees():
         Dictionary with fees for each chain
     """
     try:
+        # All chains with active Stride host zones (verified against Stride API)
         supported_chains = [
-            "cosmos", "celestia", "osmosis", "dydx", "dymension",
+            "cosmos", "celestia", "osmosis", "dydx",
             "juno", "stargaze", "terra2", "evmos", "injective",
-            "umee", "comdex", "haqq", "band"
+            "umee", "comdex", "haqq", "band", "saga", "sommelier"
         ]
 
         # Pre-fetch all prices in a single batch request to avoid rate limits
@@ -147,9 +148,12 @@ async def get_chain_fees(chain: str) -> FeeResponse:
         # Normalize chain name
         chain = chain.lower()
 
-        # Handle terra -> terra2 override
-        if chain == "terra":
-            chain = "terra2"
+        # Handle chain name overrides (matching DefiLlama's naming)
+        chain_overrides = {
+            "terra": "terra2",
+            "islm": "haqq",  # Islamic Coin → Haqq Network
+        }
+        chain = chain_overrides.get(chain, chain)
 
         # Try to calculate fees using redemption rate snapshots first (more accurate)
         fees_data = await stride_client.calculate_daily_fee_from_snapshots(chain)

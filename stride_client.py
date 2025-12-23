@@ -16,12 +16,12 @@ class StrideClient:
     """Client for interacting with Stride blockchain API"""
 
     # Mapping of DefiLlama chain names to Stride host zone chain IDs
+    # Maps chain names to Stride chain IDs (verified against live Stride host zones)
     CHAIN_ID_MAP = {
         "cosmos": "cosmoshub-4",
         "celestia": "celestia",
         "osmosis": "osmosis-1",
         "dydx": "dydx-mainnet-1",
-        "dymension": "dymension_1100-1",
         "juno": "juno-1",
         "stargaze": "stargaze-1",
         "terra": "phoenix-1",  # terra2
@@ -32,6 +32,8 @@ class StrideClient:
         "comdex": "comdex-1",
         "haqq": "haqq_11235-1",
         "band": "laozi-mainnet",
+        "saga": "ssc-1",
+        "sommelier": "sommelier-3",
     }
 
     # CoinGecko IDs for price fetching
@@ -40,7 +42,6 @@ class StrideClient:
         "celestia": "celestia",
         "osmosis": "osmosis",
         "dydx": "dydx-chain",
-        "dymension": "dymension",
         "juno": "juno-network",
         "stargaze": "stargaze",
         "terra": "terra-luna-2",
@@ -51,25 +52,28 @@ class StrideClient:
         "comdex": "comdex",
         "haqq": "islamic-coin",
         "band": "band-protocol",
+        "saga": "saga-2",
+        "sommelier": "sommelier",
     }
 
-    # Token decimals (most Cosmos chains use 6, but some use 18)
+    # Token decimals (most Cosmos chains use 6, EVM-based chains use 18)
     TOKEN_DECIMALS = {
         "cosmos": 6,      # uatom
         "celestia": 6,    # utia
         "osmosis": 6,     # uosmo
         "dydx": 18,       # adydx (18 decimals like Ethereum)
-        "dymension": 18,  # adym
         "juno": 6,        # ujuno
         "stargaze": 6,    # ustars
         "terra": 6,       # uluna
         "terra2": 6,      # uluna
-        "evmos": 18,      # aevmos
-        "injective": 18,  # inj
+        "evmos": 18,      # aevmos (EVM-based)
+        "injective": 18,  # inj (EVM-based)
         "umee": 6,        # uumee
         "comdex": 6,      # ucmdx
-        "haqq": 18,       # aISLM
+        "haqq": 18,       # aISLM (EVM-based)
         "band": 6,        # uband
+        "saga": 6,        # usaga
+        "sommelier": 6,   # usomm
     }
 
     # API endpoints for each chain to query staking parameters
@@ -779,10 +783,11 @@ class StrideClient:
         Fetch and store current prices for all supported chains
         This should be called once per day by the scheduler
         """
+        # All chains with active Stride host zones (verified against Stride API)
         chains = [
-            "cosmos", "celestia", "osmosis", "dydx", "dymension",
+            "cosmos", "celestia", "osmosis", "dydx",
             "juno", "stargaze", "terra2", "evmos", "injective",
-            "umee", "comdex", "haqq", "band"
+            "umee", "comdex", "haqq", "band", "saga", "sommelier"
         ]
 
         logger.info("Updating persistent price cache for all chains...")
