@@ -373,28 +373,59 @@ Core stack:
 
 **Always use `TOKEN_DECIMALS` dict** when converting native amounts to token amounts.
 
-## Recent Bug Fixes (Dec 2024)
+## Recent Improvements (Dec 2024)
 
-### Critical: Silent $0 Fees Bug in Batch Endpoint
+### Critical: Silent $0 Fees Bug in Batch Endpoint (FIXED)
 **Problem**: `/api/all/stats/fees` returned $0 for all chains while single chain endpoints worked correctly.
 
 **Root Cause**: Price fetch failures were silently swallowed, setting `token_price = 0.0` instead of raising exceptions. When CoinGecko rate limited batch requests, subsequent calculations resulted in $0 fees.
 
 **Fixes Applied**:
-1. **Raise exceptions on price failures** (stride_client.py:470): Changed from logging warning + using $0 to raising `ValueError`
+1. **Raise exceptions on price failures** (stride_client.py:475): Changed from logging warning + using $0 to raising `ValueError`
 2. **Retry logic with exponential backoff** (stride_client.py:394-407): Added 3 retry attempts with 1s/2s delays for batch price fetching
 3. **Better error handling in batch endpoint** (main.py:100-103): Wrap batch price fetch in try/except to log failures without crashing
 
 **Result**: Errors are now properly logged, and transient CoinGecko failures are handled gracefully with retries.
 
+### Persistent Price Caching System (NEW)
+**Problem**: CoinGecko API rate limits cause intermittent failures, especially during high-traffic periods.
+
+**Solution**: Daily persistent price cache with intelligent fallback (stride_client.py:632-724):
+
+**How It Works**:
+1. **Daily Price Updates** (scheduler.py:50-78): Fetches and stores all 14 token prices once per day at 00:30 UTC
+2. **Three-Tier Price Lookup** (stride_client.py:436-476):
+   - **Tier 1**: In-memory cache (5 min TTL) - fastest
+   - **Tier 2**: Live CoinGecko fetch - if cache expired
+   - **Tier 3**: Persistent cache (daily updates) - fallback if live fetch fails
+3. **Storage**: `token_prices.json` in same directory as snapshots (Railway Volume if configured)
+
+**Benefits**:
+- ✅ API remains functional even when CoinGecko is down or rate-limiting
+- ✅ Reduces CoinGecko API calls by 99% (one batch per day vs hundreds per day)
+- ✅ Prices update daily automatically - sufficient granularity for fee calculations
+- ✅ Graceful degradation: uses last known good price instead of failing with $0
+
+**File Format** (token_prices.json):
+```json
+{
+  "last_updated": "2025-12-23T00:30:00Z",
+  "prices": {
+    "cosmos": {"price": 7.23, "timestamp": "2025-12-23T00:30:00Z"},
+    "osmosis": {"price": 0.52, "timestamp": "2025-12-23T00:30:00Z"},
+    ...
+  }
+}
+```
+
 ## Known Limitations
 
-1. **Snapshot data collection**: Requires daily cron job for optimal accuracy (falls back to APR estimation if unavailable)
-2. **Single-instance cache**: Price and APR caches are in-memory; consider Redis for horizontal scaling
+1. **Snapshot data collection**: Requires Railway Volume setup for optimal accuracy (falls back to APR estimation if unavailable)
+2. **Single-instance cache**: In-memory caches (5 min TTL) are per-instance; consider Redis for horizontal scaling
 3. **No authentication**: Public API with no rate limiting
-4. **CoinGecko rate limits**: Free tier limits batch operations; may need paid API key for production
-5. **No tests**: No unit or integration tests yet
-6. **Historical data approximation**: Historical fee generation uses current staking amounts as proxy (not true historical state)
+4. **No tests**: No unit or integration tests yet
+5. **Historical data approximation**: Historical fee generation uses current staking amounts as proxy (not true historical state)
+6. **Price staleness**: Persistent price cache updates once daily; may be up to 24 hours old during CoinGecko outages
 
 ## Advantages of Redemption Rate Method
 

@@ -434,16 +434,46 @@ class StrideClient:
             return prices
 
     async def get_token_price(self, chain: str) -> Optional[float]:
-        """Get USD price for a token using CoinGecko (with caching)"""
-        # Check cache first
+        """
+        Get USD price for a token using CoinGecko (with caching and persistent fallback)
+
+        Priority order:
+        1. In-memory cache (5 min TTL) - fastest
+        2. Live CoinGecko fetch - if cache expired
+        3. Persistent cache (daily updates) - fallback if live fetch fails
+        """
+        # Check in-memory cache first (5 min TTL)
         if self._is_price_cached(chain):
             price = self._price_cache[chain]["price"]
-            logger.debug(f"Using cached price for {chain}: ${price}")
+            logger.debug(f"Using in-memory cached price for {chain}: ${price}")
             return price
 
-        # Fetch single price (will be cached)
-        prices = await self.get_token_prices_batch([chain])
-        return prices.get(chain)
+        # Try to fetch fresh price
+        try:
+            prices = await self.get_token_prices_batch([chain])
+            price = prices.get(chain)
+
+            if price is not None:
+                return price
+
+            # Live fetch returned None, fall back to persistent cache
+            logger.warning(f"Live price fetch returned None for {chain}, checking persistent cache...")
+
+        except Exception as e:
+            # Live fetch failed, fall back to persistent cache
+            logger.warning(f"Live price fetch failed for {chain}: {e}, checking persistent cache...")
+
+        # Fall back to persistent cache
+        persistent_data = self.load_persistent_prices()
+        if chain in persistent_data.get("prices", {}):
+            persistent_price = persistent_data["prices"][chain]["price"]
+            persistent_time = persistent_data["prices"][chain]["timestamp"]
+            logger.info(f"Using persistent cached price for {chain}: ${persistent_price} (from {persistent_time})")
+            return persistent_price
+
+        # No price available anywhere
+        logger.error(f"No price available for {chain} in any cache")
+        return None
 
     async def calculate_daily_fee(self, chain: str) -> Dict[str, float]:
         """
@@ -628,3 +658,97 @@ class StrideClient:
         except Exception as e:
             logger.warning(f"Failed to calculate fees from snapshots for {chain}: {e}")
             return None
+
+    def get_price_cache_path(self) -> Path:
+        """Get the path to the persistent price cache file"""
+        import os
+        snapshot_data_dir = os.getenv("SNAPSHOT_DATA_DIR")
+        if snapshot_data_dir:
+            return Path(snapshot_data_dir) / "token_prices.json"
+        else:
+            return Path(__file__).parent / "token_prices.json"
+
+    def load_persistent_prices(self) -> Dict[str, Dict]:
+        """
+        Load token prices from persistent storage
+
+        Returns:
+            Dict with format: {
+                "last_updated": "ISO timestamp",
+                "prices": {
+                    "cosmos": {"price": 7.23, "timestamp": "ISO timestamp"},
+                    "osmosis": {"price": 0.52, "timestamp": "ISO timestamp"},
+                    ...
+                }
+            }
+        """
+        price_file = self.get_price_cache_path()
+
+        if not price_file.exists():
+            logger.debug(f"No persistent price file at {price_file}")
+            return {"prices": {}}
+
+        try:
+            with open(price_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load persistent prices: {e}")
+            return {"prices": {}}
+
+    def save_persistent_prices(self, prices: Dict[str, float]):
+        """
+        Save token prices to persistent storage
+
+        Args:
+            prices: Dict mapping chain name to USD price
+        """
+        price_file = self.get_price_cache_path()
+
+        try:
+            # Load existing data
+            data = self.load_persistent_prices()
+
+            # Update with new prices
+            timestamp = datetime.now(timezone.utc).isoformat()
+            for chain, price in prices.items():
+                if price is not None:
+                    data["prices"][chain] = {
+                        "price": price,
+                        "timestamp": timestamp
+                    }
+
+            data["last_updated"] = timestamp
+
+            # Save to file
+            with open(price_file, 'w') as f:
+                json.dump(data, f, indent=2)
+
+            logger.info(f"Saved {len(prices)} prices to {price_file}")
+        except Exception as e:
+            logger.error(f"Failed to save persistent prices: {e}")
+
+    async def update_persistent_price_cache(self):
+        """
+        Fetch and store current prices for all supported chains
+        This should be called once per day by the scheduler
+        """
+        chains = [
+            "cosmos", "celestia", "osmosis", "dydx", "dymension",
+            "juno", "stargaze", "terra2", "evmos", "injective",
+            "umee", "comdex", "haqq", "band"
+        ]
+
+        logger.info("Updating persistent price cache for all chains...")
+
+        try:
+            # Fetch fresh prices
+            prices = await self.get_token_prices_batch(chains)
+
+            # Save to persistent storage
+            self.save_persistent_prices(prices)
+
+            successful = sum(1 for p in prices.values() if p is not None)
+            logger.info(f"✅ Updated {successful}/{len(chains)} prices in persistent cache")
+
+        except Exception as e:
+            logger.error(f"Failed to update persistent price cache: {e}")
